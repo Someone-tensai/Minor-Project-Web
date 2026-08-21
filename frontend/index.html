@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grad-CAM Model Explorer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8eb;
+    --muted: #8b909c;
+    --accent: #5b9dff;
+    --good: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  select, input[type=file] {
+    width: 100%;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 220px; }
+
+  button {
+    background: var(--accent);
+    color: #0b0d12;
+    border: none;
+    padding: 11px 20px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 16px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+
+  .images { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 20px; }
+  .images figure { flex: 1; min-width: 260px; margin: 0; }
+  .images img { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
+  .images figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
+
+  .result { margin-top: 20px; }
+  .pred { font-size: 22px; font-weight: 700; color: var(--good); }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
+  .bar-label { width: 110px; color: var(--muted); flex-shrink: 0; text-align: right; }
+  .bar-track { flex: 1; background: #0f1115; border-radius: 4px; overflow: hidden; height: 14px; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; background: var(--accent); }
+  .bar-pct { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .status { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .error { color: #f87171; font-size: 13px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Grad-CAM Model Explorer</h1>
+  <div class="sub">Pick a model, upload an image, see the prediction and why the model made it.</div>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect"></select>
+      </div>
+      <div>
+        <label for="imageInput">Image</label>
+        <input type="file" id="imageInput" accept="image/*">
+      </div>
+    </div>
+    <button id="runBtn" disabled>Run inference</button>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="resultsPanel" class="panel" style="display:none;">
+    <div class="result">
+      <div class="pred" id="predLabel"></div>
+      <div id="probBars" style="margin-top: 14px;"></div>
+    </div>
+    <div class="images">
+      <figure>
+        <img id="originalImg" src="" alt="Original image">
+        <figcaption>Input</figcaption>
+      </figure>
+      <figure>
+        <img id="camImg" src="" alt="Grad-CAM overlay">
+        <figcaption>Grad-CAM — where the model looked</figcaption>
+      </figure>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = ""; // same origin, backend serves this file too
+
+const modelSelect = document.getElementById("modelSelect");
+const imageInput = document.getElementById("imageInput");
+const runBtn = document.getElementById("runBtn");
+const statusEl = document.getElementById("status");
+const resultsPanel = document.getElementById("resultsPanel");
+const predLabel = document.getElementById("predLabel");
+const probBars = document.getElementById("probBars");
+const originalImg = document.getElementById("originalImg");
+const camImg = document.getElementById("camImg");
+
+let selectedFile = null;
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.className = isError ? "error" : "status";
+}
+
+function updateRunEnabled() {
+  runBtn.disabled = !(selectedFile && modelSelect.value);
+}
+
+async function loadModels() {
+  try {
+    const res = await fetch(`${API_BASE}/models`);
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    if (!data.models.length) {
+      setStatus("No models found in backend/models/ — drop a .pth file in there and refresh.", true);
+      return;
+    }
+    modelSelect.innerHTML = data.models.map(m => `<option value="${m}">${m}</option>`).join("");
+    updateRunEnabled();
+  } catch (e) {
+    setStatus(`Couldn't reach the backend: ${e.message}. Is main.py running?`, true);
+  }
+}
+
+imageInput.addEventListener("change", () => {
+  selectedFile = imageInput.files[0] || null;
+  updateRunEnabled();
+});
+modelSelect.addEventListener("change", updateRunEnabled);
+
+runBtn.addEventListener("click", async () => {
+  if (!selectedFile || !modelSelect.value) return;
+
+  runBtn.disabled = true;
+  resultsPanel.style.display = "none";
+  setStatus("Running inference and Grad-CAM…");
+
+  const form = new FormData();
+  form.append("model_name", modelSelect.value);
+  form.append("file", selectedFile);
+
+  try {
+    const res = await fetch(`${API_BASE}/predict`, { method: "POST", body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server returned ${res.status}`);
+    }
+    const data = await res.json();
+
+    predLabel.textContent = `Prediction: ${data.predicted_class}`;
+
+    const sorted = Object.entries(data.probabilities).sort((a, b) => b[1] - a[1]);
+    probBars.innerHTML = sorted.map(([label, p]) => `
+      <div class="bar-row">
+        <div class="bar-label">${label}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(p*100).toFixed(1)}%"></div></div>
+        <div class="bar-pct">${(p*100).toFixed(1)}%</div>
+      </div>
+    `).join("");
+
+    originalImg.src = `data:image/png;base64,${data.original_image}`;
+    camImg.src = `data:image/png;base64,${data.gradcam_overlay}`;
+
+    resultsPanel.style.display = "block";
+    setStatus("");
+  } catch (e) {
+    setStatus(`Error: ${e.message}`, true);
+  } finally {
+    updateRunEnabled();
+  }
+});
+
+loadModels();
+</script>
+</body>
+</html>
