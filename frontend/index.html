@@ -1,211 +1,1768 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Grad-CAM Model Explorer</title>
-<style>
-  :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --border: #2a2e38;
-    --text: #e6e8eb;
-    --muted: #8b909c;
-    --accent: #5b9dff;
-    --good: #4ade80;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    padding: 32px 16px;
-  }
-  .wrap { max-width: 880px; margin: 0 auto; }
-  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grad-CAM Explorer — Federated vs. Centralized Learning</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@500;600;700;800&amp;display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #F3F2EE;
+      --surface: #FFFFFF;
+      --surface-alt: #F8F7F4;
+      --ink: #1B1E22;
+      --ink-muted: #565F6A;
+      --rule: #E4E7EB;
+      --rule-strong: #D2D6DB;
+      --accent: #3452D0;
+      --tumor: #C0392E;
+      --tumor-bg: rgba(192, 57, 46, 0.06);
+      --notumor: #2354C7;
+      --notumor-bg: rgba(35, 84, 199, 0.06);
+      --muted: #6B7480;
+      --muted-light: #98A0AA;
+      --font-form: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", Menlo, Consolas, monospace;
+    }
 
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
+    * {
+      box-sizing: border-box;
+      border-radius: 0 !important;
+    }
 
-  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-form);
+      font-size: 15px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
 
-  select, input[type=file] {
-    width: 100%;
-    background: #0f1115;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: 6px;
-    font-size: 14px;
-  }
+    /* Outer binder container */
+    .binder {
+      max-width: 1280px;
+      margin: 32px auto;
+      padding: 0 20px 56px;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
 
-  .row { display: flex; gap: 16px; flex-wrap: wrap; }
-  .row > div { flex: 1; min-width: 220px; }
+    @media (max-width: 960px) {
+      .binder {
+        grid-template-columns: 1fr;
+        margin: 16px auto;
+        padding: 0 14px 32px;
+      }
+    }
 
-  button {
-    background: var(--accent);
-    color: #0b0d12;
-    border: none;
-    padding: 11px 20px;
-    border-radius: 6px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    margin-top: 16px;
-  }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button:hover:not(:disabled) { filter: brightness(1.1); }
+    /* Index Rail (run history) */
+    .index-rail {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--rule-strong);
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgba(20, 20, 20, 0.04);
+    }
 
-  .images { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 20px; }
-  .images figure { flex: 1; min-width: 260px; margin: 0; }
-  .images img { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; }
-  .images figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
+    .rail-header {
+      font-family: var(--font-form);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--rule);
+      background: var(--surface-alt);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
 
-  .result { margin-top: 20px; }
-  .pred { font-size: 22px; font-weight: 700; color: var(--good); }
-  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
-  .bar-label { width: 110px; color: var(--muted); flex-shrink: 0; text-align: right; }
-  .bar-track { flex: 1; background: #0f1115; border-radius: 4px; overflow: hidden; height: 14px; border: 1px solid var(--border); }
-  .bar-fill { height: 100%; background: var(--accent); }
-  .bar-pct { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .rail-count-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      background: var(--ink);
+      color: #FFF;
+      padding: 2px 7px;
+    }
 
-  .status { color: var(--muted); font-size: 13px; margin-top: 12px; }
-  .error { color: #f87171; font-size: 13px; margin-top: 12px; }
-</style>
+    .rail-tab {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--rule);
+      border-left: 3px solid transparent;
+      padding: 11px 14px;
+      font-family: var(--font-form);
+      font-size: 13.5px;
+      color: var(--ink-muted);
+      cursor: pointer;
+      line-height: 1.4;
+      transition: none;
+    }
+
+    .rail-tab:hover {
+      background: var(--surface-alt);
+      color: var(--ink);
+    }
+
+    .rail-tab.active {
+      background: #FFFFFF;
+      border-left: 3px solid var(--accent);
+      border-bottom: 1px solid var(--rule);
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .rail-tab .tab-case-id {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 12.5px;
+      letter-spacing: 0.01em;
+    }
+
+    .rail-tab .tab-pred-pill {
+      font-family: var(--font-form);
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border: 1px solid var(--rule-strong);
+    }
+
+    .rail-tab .tab-pred-pill.tumor {
+      color: var(--tumor);
+      border-color: var(--tumor);
+    }
+
+    .rail-tab .tab-pred-pill.notumor {
+      color: var(--notumor);
+      border-color: var(--notumor);
+    }
+
+    .rail-tab .tab-meta {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+      font-family: var(--font-form);
+    }
+
+    .rail-tab.new-run-tab {
+      font-family: var(--font-form);
+      font-weight: 700;
+      font-size: 13.5px;
+      color: var(--ink);
+      padding: 13px 14px;
+      background: var(--surface-alt);
+    }
+
+    .rail-tab.new-run-tab.active {
+      background: var(--ink);
+      color: #FFFFFF;
+      border-left: 3px solid var(--ink);
+    }
+
+    .rail-tab.new-run-tab:hover:not(.active) {
+      background: #ECEAE3;
+    }
+
+    /* History Collapsible Section */
+    .rail-history-section {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .rail-history-toggle {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      background: var(--surface-alt);
+      border: none;
+      border-bottom: 1px solid var(--rule-strong);
+      border-left: 3px solid transparent;
+      padding: 11px 14px;
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--ink);
+      cursor: pointer;
+      text-align: left;
+      user-select: none;
+      transition: background 0.12s ease;
+    }
+
+    .rail-history-toggle:hover {
+      background: #ECEAE3;
+    }
+
+    .history-toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .history-toggle-icon {
+      font-size: 8px;
+      display: inline-block;
+      transition: transform 0.15s ease;
+      transform: rotate(0deg);
+      line-height: 1;
+      color: var(--muted);
+    }
+
+    .rail-history-toggle.collapsed .history-toggle-icon {
+      transform: rotate(-90deg);
+    }
+
+    #historyTabsList {
+      max-height: calc(100vh - 240px);
+      overflow-y: auto;
+      display: block;
+      background: var(--surface);
+    }
+
+    #historyTabsList.collapsed {
+      display: none;
+    }
+
+    .history-empty-note {
+      padding: 16px 14px;
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--muted);
+      text-align: center;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    /* Main Worksheet Frame */
+    .worksheet {
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 1px 3px rgba(20, 20, 20, 0.04), 0 12px 32px rgba(20, 20, 20, 0.03);
+    }
+
+    /* Form Top Banner */
+    .form-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      border-bottom: 1px solid var(--rule);
+      padding: 22px 28px 20px;
+      background: var(--surface);
+      gap: 20px;
+    }
+
+    @media (max-width: 720px) {
+      .form-header {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .header-branding {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .dept-emblem {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--rule-strong);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-form);
+      font-weight: 700;
+      font-size: 15px;
+      background: var(--surface-alt);
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .header-titles {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .dept-title {
+      font-family: var(--font-form);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    h1.form-title {
+      font-family: var(--font-form);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin: 0;
+      color: var(--ink);
+    }
+
+    .header-meta-grid {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 1px;
+      background: var(--rule);
+      border: 1px solid var(--rule);
+      align-self: start;
+    }
+
+    .header-meta-item {
+      background: var(--surface);
+      padding: 7px 12px;
+      font-size: 11.5px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .header-meta-item .meta-k {
+      font-family: var(--font-form);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .header-meta-item .meta-v {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    /* STRIP COMMON STYLES */
+    .strip-section {
+      border-bottom: 1px solid var(--rule);
+      padding: 24px 28px;
+    }
+
+    .strip-section:last-of-type {
+      border-bottom: none;
+    }
+
+    .strip-tag {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 10px;
+    }
+
+    .strip-tag .strip-title {
+      font-family: var(--font-form);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+
+    .strip-tag .strip-num {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    /* STRIP 1: STUDY */
+    .study-row-top {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+      align-items: end;
+    }
+
+    @media (max-width: 768px) {
+      .study-row-top {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .field-select-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field-label {
+      font-family: var(--font-form);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    select.clinical-select {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      color: var(--ink);
+      font-family: var(--font-form);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 10px 32px 10px 12px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23565F6A'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      cursor: pointer;
+    }
+
+    select.clinical-select:disabled {
+      background-color: var(--surface-alt);
+      color: var(--ink);
+      cursor: not-allowed;
+      opacity: 1;
+    }
+
+    select.clinical-select:focus-visible, button:focus-visible, input:focus-visible, .drop-frame:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+
+    .study-model-meta {
+      border: 1px solid var(--rule);
+      background: var(--surface-alt);
+      padding: 9px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-form);
+      font-size: 12px;
+      font-weight: 500;
+      height: 42px;
+    }
+
+    .study-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      border: 1px solid var(--rule-strong);
+      background: var(--surface);
+    }
+
+    @media (max-width: 800px) {
+      .study-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .spec-cell {
+      border-right: 1px solid var(--rule);
+      padding: 11px 13px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 56px;
+      background: var(--surface);
+    }
+
+    .spec-cell:nth-child(even) {
+      background: #FAF9F6;
+    }
+
+    .spec-cell:last-child {
+      border-right: none;
+    }
+
+    @media (max-width: 800px) {
+      .spec-cell {
+        border-bottom: 1px solid var(--rule);
+      }
+    }
+
+    .spec-cell .cell-label {
+      font-family: var(--font-form);
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .spec-cell .cell-value {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* STRIP 2: IMAGE */
+    .image-strip-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 720px) {
+      .image-strip-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .inspection-box {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--rule);
+      background: var(--surface);
+    }
+
+    .box-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 14px;
+      background: var(--surface-alt);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .box-title {
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .box-sub {
+      font-family: var(--font-form);
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    /* Film-jacket registration corner tick marks container */
+    .tick-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .tick-frame::before,
+    .tick-frame::after {
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0.55;
+    }
+
+    .tick-frame::before {
+      top: 8px;
+      left: 8px;
+      border-top: 1.5px solid #FFFFFF;
+      border-left: 1.5px solid #FFFFFF;
+    }
+
+    .tick-frame::after {
+      top: 8px;
+      right: 8px;
+      border-top: 1.5px solid #FFFFFF;
+      border-right: 1.5px solid #FFFFFF;
+    }
+
+    .tick-marks-bottom {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0.55;
+    }
+
+    .tick-marks-bottom::before {
+      content: "";
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      width: 12px;
+      height: 12px;
+      border-bottom: 1.5px solid #FFFFFF;
+      border-left: 1.5px solid #FFFFFF;
+    }
+
+    .tick-marks-bottom::after {
+      content: "";
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      width: 12px;
+      height: 12px;
+      border-bottom: 1.5px solid #FFFFFF;
+      border-right: 1.5px solid #FFFFFF;
+    }
+
+    /* Dropzone inside INPUT tick-frame */
+    .drop-frame {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      background: #12151A;
+      border: 1px dashed #3D444B;
+      margin: 12px;
+    }
+
+    .drop-frame:hover {
+      background: #191E23;
+      border-color: #7A848F;
+    }
+
+    .drop-frame.drag-active {
+      background: #232A31;
+      border-color: #FFFFFF;
+      border-style: solid;
+    }
+
+    .drop-frame.has-image {
+      padding: 0;
+      margin: 0;
+      border: none;
+      background: #000000;
+    }
+
+    .drop-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .drop-icon-reticle {
+      width: 32px;
+      height: 32px;
+      border: 1px solid #5A626A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9AA0A6;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .drop-prompt {
+      font-family: var(--font-form);
+      font-size: 13px;
+      font-weight: 600;
+      color: #EDEDED;
+      margin-bottom: 4px;
+    }
+
+    .drop-sub {
+      font-family: var(--font-form);
+      font-size: 11.5px;
+      font-weight: 400;
+      color: #8C9298;
+    }
+
+    .gradcam-view {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: #000000;
+    }
+
+    .gradcam-view img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .gradcam-empty {
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #7A828A;
+      border: 1px dashed #2A3036;
+      padding: 20px;
+      margin: 12px;
+      width: calc(100% - 24px);
+      height: calc(100% - 24px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .box-footer-meta {
+      padding: 8px 14px;
+      background: var(--surface-alt);
+      border-top: 1px solid var(--rule);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* STRIP 3: RESULTS */
+    .impression-layout {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 820px) {
+      .impression-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .impression-table {
+      width: 100%;
+      border: 1px solid var(--rule-strong);
+      border-collapse: collapse;
+      background: var(--surface);
+    }
+
+    .impression-table th {
+      font-family: var(--font-form);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: left;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--rule-strong);
+      background: var(--surface-alt);
+    }
+
+    .impression-table th.th-bar {
+      width: 35%;
+    }
+
+    .impression-table th.th-prob {
+      text-align: right;
+      width: 20%;
+    }
+
+    .impression-row {
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .impression-row:last-child {
+      border-bottom: none;
+    }
+
+    .impression-row.top-pred {
+      background: #F8FAFC;
+      font-weight: 600;
+    }
+
+    .impression-row td {
+      padding: 10px 14px;
+      font-family: var(--font-form);
+      font-size: 13.5px;
+      color: var(--ink);
+      vertical-align: middle;
+    }
+
+    .impression-row .class-name {
+      font-weight: 500;
+    }
+
+    .meter-track {
+      width: 100%;
+      height: 9px;
+      background: #EEF2F6;
+      border: 1px solid var(--rule);
+      position: relative;
+    }
+
+    .meter-fill {
+      height: 100%;
+      background: var(--ink);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .meter-fill.tumor-fill {
+      background: var(--tumor);
+    }
+
+    .meter-fill.notumor-fill {
+      background: var(--notumor);
+    }
+
+    .impression-row .class-val {
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Verdict / Prediction Panel */
+    .verdict-stamp-panel {
+      border: 1px solid var(--rule);
+      background: var(--surface-alt);
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 140px;
+    }
+
+    .verdict-stamp-panel.active.tumor {
+      border: 1px solid var(--tumor);
+      background: var(--tumor-bg);
+      color: var(--tumor);
+    }
+
+    .verdict-stamp-panel.active.notumor {
+      border: 1px solid var(--notumor);
+      background: var(--notumor-bg);
+      color: var(--notumor);
+    }
+
+    .stamp-badge-label {
+      font-family: var(--font-form);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      color: var(--muted);
+    }
+
+    .verdict-stamp-panel.active.tumor .stamp-badge-label {
+      color: var(--tumor);
+    }
+
+    .verdict-stamp-panel.active.notumor .stamp-badge-label {
+      color: var(--notumor);
+    }
+
+    .stamp-verdict-title {
+      font-family: var(--font-form);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.25;
+      margin-bottom: 10px;
+    }
+
+    .stamp-details-line {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      border-top: 1px solid var(--rule);
+      padding-top: 8px;
+      margin-top: 4px;
+    }
+
+    .verdict-stamp-panel.active.tumor .stamp-details-line {
+      border-top-color: rgba(192, 57, 46, 0.22);
+    }
+
+    .verdict-stamp-panel.active.notumor .stamp-details-line {
+      border-top-color: rgba(35, 84, 199, 0.22);
+    }
+
+    /* ACTION FOOTER */
+    .form-footer {
+      padding: 18px 28px;
+      background: var(--surface-alt);
+      border-top: 1px solid var(--rule);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .action-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button.form-action-btn {
+      background: var(--ink);
+      color: #FFFFFF;
+      border: 1px solid var(--ink);
+      padding: 11px 24px;
+      font-family: var(--font-form);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+    }
+
+    button.form-action-btn:hover:not(:disabled) {
+      background: #000000;
+    }
+
+    button.form-action-btn:disabled {
+      background: var(--surface);
+      color: var(--muted);
+      border-color: var(--rule-strong);
+      cursor: not-allowed;
+    }
+
+    button.form-action-secondary {
+      background: var(--surface);
+      color: var(--ink);
+      border: 1px solid var(--rule-strong);
+      padding: 10px 16px;
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.form-action-secondary:hover {
+      background: #ECEAE3;
+    }
+
+    button.form-action-danger {
+      background: var(--surface);
+      color: var(--tumor);
+      border: 1px solid var(--tumor);
+      padding: 10px 14px;
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.form-action-danger:hover {
+      background: var(--tumor-bg);
+    }
+
+    .form-status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      background: #8A93A0;
+      display: inline-block;
+    }
+
+    .status-dot.active {
+      background: #16A34A;
+    }
+
+    .status-dot.error {
+      background: var(--tumor);
+    }
+
+    .form-status {
+      font-family: var(--font-form);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--ink-muted);
+    }
+
+    .form-status.error {
+      color: var(--tumor);
+      font-weight: 600;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+  </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Grad-CAM Model Explorer</h1>
-  <div class="sub">Pick a model, upload an image, see the prediction and why the model made it.</div>
 
-  <div class="panel">
-    <div class="row">
-      <div>
-        <label for="modelSelect">Model</label>
-        <select id="modelSelect"></select>
+  <div class="binder">
+    <!-- INDEX RAIL: RUN HISTORY -->
+    <nav class="index-rail" aria-label="Run history">
+      <div class="rail-header">
+        <span>Inference Runs</span>
       </div>
-      <div>
-        <label for="imageInput">Image</label>
-        <input type="file" id="imageInput" accept="image/*">
+      <button type="button" class="rail-tab new-run-tab active" id="tabNewRun">
+        + New run
+      </button>
+
+      <!-- COLLAPSIBLE HISTORY SECTION -->
+      <div class="rail-history-section">
+        <button type="button" class="rail-history-toggle collapsed" id="historyToggle" aria-expanded="false" aria-controls="historyTabsList">
+          <span class="history-toggle-label">
+            <span class="history-toggle-icon" id="historyToggleIcon">&#9660;</span>
+            <span>Past runs</span>
+          </span>
+          <span class="rail-count-badge" id="railCount">0 runs</span>
+        </button>
+        <div id="historyTabsList" class="history-tabs-list collapsed" role="tablist">
+          <!-- Historical runs populated dynamically -->
+        </div>
       </div>
-    </div>
-    <button id="runBtn" disabled>Run inference</button>
-    <div id="status" class="status"></div>
+    </nav>
+
+    <!-- WORKSHEET FRAME -->
+    <main class="worksheet" id="worksheetFrame" role="region" aria-label="Inference worksheet">
+      
+      <!-- FORM HEADER -->
+      <header class="form-header">
+        <div class="header-branding">
+          <div class="dept-emblem" aria-hidden="true">&#9670;</div>
+          <div class="header-titles">
+            <div class="dept-title">Minor Project &middot; Federated vs. Centralized Learning</div>
+            <h1 class="form-title">Grad-CAM Explorer</h1>
+          </div>
+        </div>
+        <div class="header-meta-grid">
+          <div class="header-meta-item">
+            <span class="meta-k">Project</span>
+            <span class="meta-v">FL-VS-CL-EVAL</span>
+          </div>
+          <div class="header-meta-item">
+            <span class="meta-k">Run</span>
+            <span class="meta-v" id="worksheetCaseRef">New run</span>
+          </div>
+          <div class="header-meta-item">
+            <span class="meta-k">Input</span>
+            <span class="meta-v">Brain MRI &middot; 224px</span>
+          </div>
+          <div class="header-meta-item">
+            <span class="meta-k">Timestamp</span>
+            <span class="meta-v" id="worksheetTimestamp">&mdash;</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- 1. STUDY STRIP -->
+      <section class="strip-section" aria-labelledby="stripStudyHeading">
+        <div class="strip-tag">
+          <span class="strip-title" id="stripStudyHeading">Model &amp; training setup</span>
+          <span class="strip-num">01 / 03</span>
+        </div>
+
+        <div class="study-row-top">
+          <div class="field-select-wrapper">
+            <label for="modelSelect" class="field-label">Model checkpoint</label>
+            <select id="modelSelect" class="clinical-select"></select>
+          </div>
+          <div class="study-model-meta">
+            <span class="field-label" style="margin:0;">Grad-CAM target layer</span>
+            <span id="studyTargetLayer" style="font-weight:700;">&mdash;</span>
+          </div>
+        </div>
+
+        <div class="study-grid" role="group" aria-label="Model architecture and training parameters">
+          <div class="spec-cell">
+            <div class="cell-label">Arch</div>
+            <div class="cell-value" id="specArch">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Distribution</div>
+            <div class="cell-value" id="specDist">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Strategy</div>
+            <div class="cell-value" id="specStrat">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Clients</div>
+            <div class="cell-value" id="specClients">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Rounds</div>
+            <div class="cell-value" id="specRounds">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Layer</div>
+            <div class="cell-value" id="specLayer">&mdash;</div>
+          </div>
+          <div class="spec-cell">
+            <div class="cell-label">Augmented</div>
+            <div class="cell-value" id="specAug">&mdash;</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. IMAGE STRIP -->
+      <section class="strip-section" aria-labelledby="stripImageHeading">
+        <div class="strip-tag">
+          <span class="strip-title" id="stripImageHeading">Scan &amp; Grad-CAM localization</span>
+          <span class="strip-num">02 / 03</span>
+        </div>
+
+        <div class="image-strip-grid">
+          <!-- INPUT SCAN FRAME -->
+          <div class="inspection-box">
+            <div class="box-header">
+              <span class="box-title">Input scan</span>
+              <span class="box-sub" id="inputScanStatus">No scan yet</span>
+            </div>
+            <div class="tick-frame" id="inputTickFrame">
+              <div class="tick-marks-bottom"></div>
+              <div class="drop-frame" id="dropFrame" tabindex="0" role="button" aria-label="Upload input MRI scan">
+                <div id="dropPromptContent">
+                  <div class="drop-icon-reticle">&#8982;</div>
+                  <div class="drop-prompt">Drop an MRI scan here</div>
+                  <div class="drop-sub">or click to browse &mdash; JPG or PNG</div>
+                </div>
+              </div>
+              <input type="file" id="fileInput" accept="image/jpeg,image/png" class="sr-only">
+            </div>
+            <div class="box-footer-meta">
+              <span>Normalized: ImageNet, 224&times;224</span>
+              <span id="inputDimLabel">RGB</span>
+            </div>
+          </div>
+
+          <!-- GRAD-CAM FRAME -->
+          <div class="inspection-box">
+            <div class="box-header">
+              <span class="box-title">Grad-CAM overlay</span>
+              <span class="box-sub" id="gradcamStatus">Not run yet</span>
+            </div>
+            <div class="tick-frame" id="gradcamTickFrame">
+              <div class="tick-marks-bottom"></div>
+              <div class="gradcam-view" id="gradcamView">
+                <div class="gradcam-empty" id="gradcamEmpty">
+                  <span style="font-size:16px;">&#8981;</span>
+                  <span>Run inference to see the activation map</span>
+                </div>
+              </div>
+            </div>
+            <div class="box-footer-meta">
+              <span>Colormap: Jet</span>
+              <span>Scale: 0.0 &ndash; 1.0</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. RESULTS STRIP -->
+      <section class="strip-section" aria-labelledby="stripImpressionHeading">
+        <div class="strip-tag">
+          <span class="strip-title" id="stripImpressionHeading">Prediction &amp; class probabilities</span>
+          <span class="strip-num">03 / 03</span>
+        </div>
+
+        <div class="impression-layout">
+          <table class="impression-table" aria-label="Class probability distribution">
+            <thead>
+              <tr>
+                <th scope="col">Class</th>
+                <th scope="col" class="th-bar">Probability</th>
+                <th scope="col" class="th-prob">Value</th>
+              </tr>
+            </thead>
+            <tbody id="impressionTableBody">
+              <tr class="impression-row" id="row-glioma" data-class="glioma">
+                <td class="class-name">Glioma</td>
+                <td>
+                  <div class="meter-track"><div class="meter-fill" id="bar-glioma" style="width: 0%;"></div></div>
+                </td>
+                <td class="class-val" id="prob-glioma">&mdash;</td>
+              </tr>
+              <tr class="impression-row" id="row-meningioma" data-class="meningioma">
+                <td class="class-name">Meningioma</td>
+                <td>
+                  <div class="meter-track"><div class="meter-fill" id="bar-meningioma" style="width: 0%;"></div></div>
+                </td>
+                <td class="class-val" id="prob-meningioma">&mdash;</td>
+              </tr>
+              <tr class="impression-row" id="row-notumor" data-class="notumor">
+                <td class="class-name">No tumor</td>
+                <td>
+                  <div class="meter-track"><div class="meter-fill" id="bar-notumor" style="width: 0%;"></div></div>
+                </td>
+                <td class="class-val" id="prob-notumor">&mdash;</td>
+              </tr>
+              <tr class="impression-row" id="row-pituitary" data-class="pituitary">
+                <td class="class-name">Pituitary</td>
+                <td>
+                  <div class="meter-track"><div class="meter-fill" id="bar-pituitary" style="width: 0%;"></div></div>
+                </td>
+                <td class="class-val" id="prob-pituitary">&mdash;</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- PREDICTION PANEL -->
+          <div class="verdict-stamp-panel" id="verdictStampPanel">
+            <div class="stamp-badge-label" id="stampBadgeLabel">Prediction</div>
+            <div class="stamp-verdict-title" id="stampVerdictTitle">Awaiting run</div>
+            <div class="stamp-details-line">
+              <span id="stampFindingType">Not processed yet</span>
+              <span id="stampConfidenceVal">&mdash;</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ACTION FOOTER -->
+      <footer class="form-footer">
+        <div class="action-group" id="liveActionsGroup" style="display: flex;">
+          <button type="button" class="form-action-btn" id="executeRunBtn" disabled="">
+            Run Inference
+          </button>
+        </div>
+        <div class="action-group" id="historyActionsGroup" style="display: none;">
+          <button type="button" class="form-action-secondary" id="returnToLiveBtn">
+            &larr; Back to new run
+          </button>
+          <button type="button" class="form-action-danger" id="deleteRunBtn">
+            Delete run
+          </button>
+        </div>
+        <div class="form-status-bar">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="form-status" id="formStatus">Upload a scan and pick a model to begin</span>
+        </div>
+      </footer>
+
+    </main>
   </div>
 
-  <div id="resultsPanel" class="panel" style="display:none;">
-    <div class="result">
-      <div class="pred" id="predLabel"></div>
-      <div id="probBars" style="margin-top: 14px;"></div>
-    </div>
-    <div class="images">
-      <figure>
-        <img id="originalImg" src="" alt="Original image">
-        <figcaption>Input</figcaption>
-      </figure>
-      <figure>
-        <img id="camImg" src="" alt="Grad-CAM overlay">
-        <figcaption>Grad-CAM — where the model looked</figcaption>
-      </figure>
-    </div>
-  </div>
-</div>
+  <script>
+    const API_BASE = "";
+    const CLASSES = ["glioma", "meningioma", "notumor", "pituitary"];
 
-<script>
-const API_BASE = ""; // same origin, backend serves this file too
+    // App state
+    let modelsRegistry = {};
+    let activeMode = "live"; // "live" or runId
+    let selectedFile = null;
+    let selectedFileBase64 = null;
+    let historyRuns = [];
 
-const modelSelect = document.getElementById("modelSelect");
-const imageInput = document.getElementById("imageInput");
-const runBtn = document.getElementById("runBtn");
-const statusEl = document.getElementById("status");
-const resultsPanel = document.getElementById("resultsPanel");
-const predLabel = document.getElementById("predLabel");
-const probBars = document.getElementById("probBars");
-const originalImg = document.getElementById("originalImg");
-const camImg = document.getElementById("camImg");
+    // DOM Elements
+    const modelSelect = document.getElementById("modelSelect");
+    const studyTargetLayer = document.getElementById("studyTargetLayer");
+    const specArch = document.getElementById("specArch");
+    const specDist = document.getElementById("specDist");
+    const specStrat = document.getElementById("specStrat");
+    const specClients = document.getElementById("specClients");
+    const specRounds = document.getElementById("specRounds");
+    const specLayer = document.getElementById("specLayer");
+    const specAug = document.getElementById("specAug");
 
-let selectedFile = null;
+    const dropFrame = document.getElementById("dropFrame");
+    const fileInput = document.getElementById("fileInput");
+    const inputScanStatus = document.getElementById("inputScanStatus");
 
-function setStatus(msg, isError = false) {
-  statusEl.textContent = msg;
-  statusEl.className = isError ? "error" : "status";
-}
+    const gradcamView = document.getElementById("gradcamView");
+    const gradcamStatus = document.getElementById("gradcamStatus");
 
-function updateRunEnabled() {
-  runBtn.disabled = !(selectedFile && modelSelect.value);
-}
+    const verdictStampPanel = document.getElementById("verdictStampPanel");
+    const stampBadgeLabel = document.getElementById("stampBadgeLabel");
+    const stampVerdictTitle = document.getElementById("stampVerdictTitle");
+    const stampFindingType = document.getElementById("stampFindingType");
+    const stampConfidenceVal = document.getElementById("stampConfidenceVal");
 
-async function loadModels() {
-  try {
-    const res = await fetch(`${API_BASE}/models`);
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    const data = await res.json();
-    if (!data.models.length) {
-      setStatus("No models found in backend/models/ — drop a .pth file in there and refresh.", true);
-      return;
+    const executeRunBtn = document.getElementById("executeRunBtn");
+    const returnToLiveBtn = document.getElementById("returnToLiveBtn");
+    const deleteRunBtn = document.getElementById("deleteRunBtn");
+    const liveActionsGroup = document.getElementById("liveActionsGroup");
+    const historyActionsGroup = document.getElementById("historyActionsGroup");
+    const formStatus = document.getElementById("formStatus");
+    const statusDot = document.getElementById("statusDot");
+
+    const worksheetCaseRef = document.getElementById("worksheetCaseRef");
+    const worksheetTimestamp = document.getElementById("worksheetTimestamp");
+
+    const tabNewRun = document.getElementById("tabNewRun");
+    const historyToggle = document.getElementById("historyToggle");
+    const historyTabsList = document.getElementById("historyTabsList");
+    const railCount = document.getElementById("railCount");
+
+    function toTitleCase(str) {
+      if (!str) return "";
+      return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
     }
-    modelSelect.innerHTML = data.models.map(m => `<option value="${m}">${m}</option>`).join("");
-    updateRunEnabled();
-  } catch (e) {
-    setStatus(`Couldn't reach the backend: ${e.message}. Is main.py running?`, true);
-  }
-}
 
-imageInput.addEventListener("change", () => {
-  selectedFile = imageInput.files[0] || null;
-  updateRunEnabled();
-});
-modelSelect.addEventListener("change", updateRunEnabled);
-
-runBtn.addEventListener("click", async () => {
-  if (!selectedFile || !modelSelect.value) return;
-
-  runBtn.disabled = true;
-  resultsPanel.style.display = "none";
-  setStatus("Running inference and Grad-CAM…");
-
-  const form = new FormData();
-  form.append("model_name", modelSelect.value);
-  form.append("file", selectedFile);
-
-  try {
-    const res = await fetch(`${API_BASE}/predict`, { method: "POST", body: form });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || `Server returned ${res.status}`);
+    function formatModelLabel(name, spec) {
+      if (!spec) return name;
+      const parts = [
+        spec.arch,
+        spec.layer,
+        spec.distribution ? spec.distribution.toUpperCase() : null,
+        spec.strategy,
+        spec.clients != null ? `${spec.clients} clients` : null,
+        spec.rounds != null ? `${spec.rounds} rounds` : null,
+      ].filter(Boolean);
+      if (spec.mu != null) parts.push(`μ=${spec.mu}`);
+      if (spec.augmented) parts.push("augmented");
+      return parts.length ? parts.join(" · ") : name;
     }
-    const data = await res.json();
 
-    predLabel.textContent = `Prediction: ${data.predicted_class}`;
+    function toggleHistoryList(forceOpen = null) {
+      const isCurrentlyCollapsed = historyTabsList.classList.contains("collapsed");
+      const shouldOpen = forceOpen !== null ? forceOpen : isCurrentlyCollapsed;
 
-    const sorted = Object.entries(data.probabilities).sort((a, b) => b[1] - a[1]);
-    probBars.innerHTML = sorted.map(([label, p]) => `
-      <div class="bar-row">
-        <div class="bar-label">${label}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${(p*100).toFixed(1)}%"></div></div>
-        <div class="bar-pct">${(p*100).toFixed(1)}%</div>
-      </div>
-    `).join("");
+      if (shouldOpen) {
+        historyTabsList.classList.remove("collapsed");
+        historyToggle.classList.remove("collapsed");
+        historyToggle.setAttribute("aria-expanded", "true");
+      } else {
+        historyTabsList.classList.add("collapsed");
+        historyToggle.classList.add("collapsed");
+        historyToggle.setAttribute("aria-expanded", "false");
+      }
+    }
 
-    originalImg.src = `data:image/png;base64,${data.original_image}`;
-    camImg.src = `data:image/png;base64,${data.gradcam_overlay}`;
+    historyToggle.addEventListener("click", () => {
+      toggleHistoryList();
+    });
 
-    resultsPanel.style.display = "block";
-    setStatus("");
-  } catch (e) {
-    setStatus(`Error: ${e.message}`, true);
-  } finally {
-    updateRunEnabled();
-  }
-});
+    function setStatus(msg, statusType = "idle") {
+      formStatus.textContent = msg;
+      statusDot.className = "status-dot";
+      formStatus.className = "form-status";
+      
+      if (statusType === "error") {
+        formStatus.classList.add("error");
+        statusDot.classList.add("error");
+      } else if (statusType === "active") {
+        statusDot.classList.add("active");
+      }
+    }
 
-loadModels();
-</script>
+    function formatTimestamp(unixSeconds) {
+      if (!unixSeconds) return "—";
+      const d = new Date(unixSeconds * 1000);
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      const hr = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      const se = String(d.getSeconds()).padStart(2, '0');
+      return `${yr}-${mo}-${da} ${hr}:${mi}:${se}`;
+    }
+
+    function formatShortDate(unixSeconds) {
+      if (!unixSeconds) return "";
+      const d = new Date(unixSeconds * 1000);
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      return `${mo}/${da}`;
+    }
+
+    function updateStudySpecFields(spec) {
+      if (!spec) {
+        specArch.textContent = "—";
+        specDist.textContent = "—";
+        specStrat.textContent = "—";
+        specClients.textContent = "—";
+        specRounds.textContent = "—";
+        specLayer.textContent = "—";
+        specAug.textContent = "—";
+        studyTargetLayer.textContent = "—";
+        return;
+      }
+      specArch.textContent = spec.arch || "—";
+      specDist.textContent = spec.distribution || "—";
+      specStrat.textContent = spec.strategy ? `${spec.strategy}${spec.mu != null ? ` (μ=${spec.mu})` : ""}` : "—";
+      specClients.textContent = spec.clients != null ? String(spec.clients) : "—";
+      specRounds.textContent = spec.rounds != null ? String(spec.rounds) : "—";
+      specLayer.textContent = spec.layer || "—";
+      specAug.textContent = spec.augmented ? "Yes" : "No";
+      studyTargetLayer.textContent = spec.layer || (spec.arch ? `${spec.arch} (Layer 4)` : "—");
+    }
+
+    function renderImpressionValues(probabilities, predictedClass) {
+      CLASSES.forEach(cls => {
+        const td = document.getElementById(`prob-${cls}`);
+        const bar = document.getElementById(`bar-${cls}`);
+        const row = document.getElementById(`row-${cls}`);
+        
+        if (row) row.classList.remove("top-pred");
+
+        if (!probabilities || probabilities[cls] == null) {
+          if (td) td.textContent = "—";
+          if (bar) {
+            bar.style.width = "0%";
+            bar.className = "meter-fill";
+          }
+        } else {
+          const pctVal = probabilities[cls] * 100;
+          const pct = pctVal.toFixed(1);
+          if (td) td.textContent = `${pct}%`;
+          if (bar) {
+            bar.style.width = `${pct}%`;
+            bar.className = `meter-fill ${cls === 'notumor' ? 'notumor-fill' : 'tumor-fill'}`;
+          }
+          if (cls === predictedClass && row) {
+            row.classList.add("top-pred");
+          }
+        }
+      });
+
+      if (!predictedClass || !probabilities || probabilities[predictedClass] == null) {
+        verdictStampPanel.className = "verdict-stamp-panel";
+        stampBadgeLabel.textContent = "Prediction";
+        stampVerdictTitle.textContent = "Awaiting run";
+        stampFindingType.textContent = "Not processed yet";
+        stampConfidenceVal.textContent = "—";
+        return;
+      }
+
+      const topPct = (probabilities[predictedClass] * 100).toFixed(1);
+      const isTumor = predictedClass.toLowerCase() !== "notumor";
+      const readableClass = predictedClass.toLowerCase() === "notumor" ? "No tumor" : toTitleCase(predictedClass);
+      
+      verdictStampPanel.className = `verdict-stamp-panel active ${isTumor ? "tumor" : "notumor"}`;
+      stampBadgeLabel.textContent = isTumor ? "Abnormal finding" : "Clear result";
+      stampVerdictTitle.textContent = readableClass;
+      stampFindingType.textContent = isTumor ? "Pathology: positive" : "Pathology: clear";
+      stampConfidenceVal.textContent = `Confidence ${topPct}%`;
+    }
+
+    function updateExecuteRunState() {
+      if (activeMode !== "live") return;
+      const ready = !!selectedFile && !!modelSelect.value;
+      executeRunBtn.disabled = !ready;
+      if (ready) {
+        setStatus("Ready to run", "active");
+      }
+    }
+
+    async function loadModels() {
+      try {
+        const res = await fetch(`${API_BASE}/models`);
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const data = await res.json();
+        modelsRegistry = Object.fromEntries(data.models.map(m => [m.name, m]));
+        
+        modelSelect.innerHTML = data.models.map(m => `<option value="${m.name}">${formatModelLabel(m.name, m.spec)}</option>`).join("");
+        if (data.models.length > 0) {
+          updateStudySpecFields(modelsRegistry[data.models[0].name].spec);
+        }
+        updateExecuteRunState();
+      } catch (err) {
+        setStatus(`Couldn't load models — ${err.message}`, "error");
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch(`${API_BASE}/history`);
+        if (!res.ok) return;
+        const data = await res.json();
+        historyRuns = data.runs || [];
+        railCount.textContent = `${historyRuns.length} run${historyRuns.length === 1 ? '' : 's'}`;
+        renderHistoryTabs();
+      } catch (err) {
+        console.error("History fetch error:", err);
+      }
+    }
+
+    function renderHistoryTabs() {
+      if (!historyRuns || historyRuns.length === 0) {
+        historyTabsList.innerHTML = `<div class="history-empty-note">No runs yet</div>`;
+        return;
+      }
+      historyTabsList.innerHTML = historyRuns.map(r => {
+        const isActive = activeMode === r.id;
+        const shortId = (r.id || "").substring(0, 8).toUpperCase();
+        const dateStr = formatShortDate(r.created_at);
+        const predStr = (r.predicted_class || "").toLowerCase() === "notumor" ? "No tumor" : toTitleCase(r.predicted_class || "");
+        const isTumor = (r.predicted_class || "").toLowerCase() !== "notumor";
+        return `
+          <button type="button" class="rail-tab ${isActive ? "active" : ""}" data-run-id="${r.id}">
+            <div class="tab-case-id">
+              <span>Run ${shortId}</span>
+              <span class="tab-pred-pill ${isTumor ? "tumor" : "notumor"}">${predStr}</span>
+            </div>
+            <span class="tab-meta">${dateStr} &middot; ${r.spec?.arch || 'CNN'}</span>
+          </button>
+        `;
+      }).join("");
+
+      historyTabsList.querySelectorAll(".rail-tab").forEach(tab => {
+        tab.addEventListener("click", () => {
+          loadHistoricalRun(tab.dataset.runId);
+        });
+      });
+    }
+
+    function switchToLiveMode() {
+      activeMode = "live";
+      tabNewRun.classList.add("active");
+      renderHistoryTabs();
+
+      modelSelect.disabled = false;
+      liveActionsGroup.style.display = "flex";
+      historyActionsGroup.style.display = "none";
+      worksheetCaseRef.textContent = "New run";
+      worksheetTimestamp.textContent = formatTimestamp(Math.floor(Date.now() / 1000));
+
+      const curModel = modelSelect.value;
+      if (curModel && modelsRegistry[curModel]) {
+        updateStudySpecFields(modelsRegistry[curModel].spec);
+      }
+
+      if (selectedFileBase64) {
+        dropFrame.classList.add("has-image");
+        dropFrame.innerHTML = `<img src="${selectedFileBase64}" alt="Input specimen">`;
+        inputScanStatus.textContent = "Scan loaded";
+      } else {
+        dropFrame.classList.remove("has-image");
+        dropFrame.innerHTML = `
+          <div id="dropPromptContent">
+            <div class="drop-icon-reticle">&#8982;</div>
+            <div class="drop-prompt">Drop an MRI scan here</div>
+            <div class="drop-sub">or click to browse — JPG or PNG</div>
+          </div>
+        `;
+        inputScanStatus.textContent = "No scan yet";
+      }
+
+      gradcamView.innerHTML = `
+        <div class="gradcam-empty" id="gradcamEmpty">
+          <span style="font-size:16px;">&#8981;</span>
+          <span>Run inference to see the activation map</span>
+        </div>
+      `;
+      gradcamStatus.textContent = "Not run yet";
+      renderImpressionValues(null, null);
+
+      updateExecuteRunState();
+      if (!selectedFile) {
+        setStatus("Upload a scan and pick a model to begin", "idle");
+      }
+    }
+
+    async function loadHistoricalRun(runId) {
+      try {
+        setStatus(`Loading run ${runId}…`, "idle");
+        const res = await fetch(`${API_BASE}/history/${runId}`);
+        if (!res.ok) throw new Error("Could not retrieve this run.");
+        const r = await res.json();
+
+        activeMode = runId;
+        tabNewRun.classList.remove("active");
+        toggleHistoryList(true);
+        renderHistoryTabs();
+
+        // Lock study controls
+        modelSelect.value = r.model_name;
+        modelSelect.disabled = true;
+        updateStudySpecFields(r.spec);
+
+        // Update worksheet headers
+        const shortId = (r.id || "").substring(0, 8).toUpperCase();
+        worksheetCaseRef.textContent = `Run ${shortId}`;
+        worksheetTimestamp.textContent = formatTimestamp(r.created_at);
+
+        // Display original scan
+        dropFrame.classList.add("has-image");
+        dropFrame.innerHTML = `<img src="${r.original_url}" alt="Archived MRI scan">`;
+        inputScanStatus.textContent = "Saved scan";
+
+        // Display Grad-CAM
+        gradcamView.innerHTML = `<img src="${r.overlay_url}" alt="Archived Grad-CAM overlay">`;
+        gradcamStatus.textContent = "Activation map ready";
+
+        // Display Impression
+        renderImpressionValues(r.probabilities, r.predicted_class);
+
+        // Button states
+        liveActionsGroup.style.display = "none";
+        historyActionsGroup.style.display = "flex";
+        setStatus(`Run ${shortId} loaded`, "active");
+      } catch (err) {
+        setStatus(`Couldn't load this run — ${err.message}`, "error");
+      }
+    }
+
+    // Event Listeners
+    modelSelect.addEventListener("change", () => {
+      const m = modelsRegistry[modelSelect.value];
+      if (m) updateStudySpecFields(m.spec);
+      updateExecuteRunState();
+    });
+
+    function handleSelectedFile(file) {
+      if (!file) return;
+      selectedFile = file;
+      const reader = new FileReader();
+      reader.onload = () => {
+        selectedFileBase64 = reader.result;
+        if (activeMode === "live") {
+          dropFrame.classList.add("has-image");
+          dropFrame.innerHTML = `<img src="${reader.result}" alt="Input specimen">`;
+          inputScanStatus.textContent = "Scan loaded";
+          updateExecuteRunState();
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    dropFrame.addEventListener("click", () => {
+      if (activeMode !== "live") return;
+      fileInput.click();
+    });
+
+    dropFrame.addEventListener("keydown", (e) => {
+      if (activeMode !== "live") return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener("change", () => {
+      handleSelectedFile(fileInput.files[0] || null);
+    });
+
+    ["dragover", "dragenter"].forEach(evt => {
+      dropFrame.addEventListener(evt, (e) => {
+        if (activeMode !== "live") return;
+        e.preventDefault();
+        dropFrame.classList.add("drag-active");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(evt => {
+      dropFrame.addEventListener(evt, (e) => {
+        if (activeMode !== "live") return;
+        e.preventDefault();
+        dropFrame.classList.remove("drag-active");
+      });
+    });
+
+    dropFrame.addEventListener("drop", (e) => {
+      if (activeMode !== "live") return;
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        fileInput.files = e.dataTransfer.files;
+        handleSelectedFile(file);
+      }
+    });
+
+    executeRunBtn.addEventListener("click", async () => {
+      if (!selectedFile || !modelSelect.value || activeMode !== "live") return;
+
+      executeRunBtn.disabled = true;
+      setStatus("Running inference…", "active");
+
+      const formData = new FormData();
+      formData.append("model_name", modelSelect.value);
+      formData.append("file", selectedFile);
+      formData.append("save_to_history", "true");
+
+      try {
+        const res = await fetch(`${API_BASE}/predict`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server returned status ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Render Grad-CAM
+        gradcamView.innerHTML = `<img src="data:image/png;base64,${data.gradcam_overlay}" alt="Grad-CAM activation overlay">`;
+        gradcamStatus.textContent = "Activation map ready";
+
+        // Render impression & verdict
+        renderImpressionValues(data.probabilities, data.predicted_class);
+
+        setStatus("Done — saved to history", "active");
+        worksheetTimestamp.textContent = formatTimestamp(Math.floor(Date.now() / 1000));
+
+        // Reload history rail to show newly saved run
+        await loadHistory();
+        toggleHistoryList(true);
+      } catch (err) {
+        setStatus(`Something went wrong — ${err.message}`, "error");
+      } finally {
+        updateExecuteRunState();
+      }
+    });
+
+    tabNewRun.addEventListener("click", () => {
+      switchToLiveMode();
+    });
+
+    returnToLiveBtn.addEventListener("click", () => {
+      switchToLiveMode();
+    });
+
+    deleteRunBtn.addEventListener("click", async () => {
+      if (activeMode === "live") return;
+      if (!confirm("Delete this run? This can't be undone.")) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/history/${activeMode}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Delete failed.");
+        await loadHistory();
+        switchToLiveMode();
+        setStatus("Run deleted", "idle");
+      } catch (err) {
+        setStatus(`Couldn't delete — ${err.message}`, "error");
+      }
+    });
+
+    // Initialize
+    worksheetTimestamp.textContent = formatTimestamp(Math.floor(Date.now() / 1000));
+    loadModels();
+    loadHistory();
+  </script>
 </body>
 </html>
