@@ -61,6 +61,8 @@ def get_cached(model_name: str):
 
 @app.get("/models")
 def list_models():
+    # spec includes "_raw" (unlabeled values) alongside the display labels --
+    # the frontend cascade filters on _raw, and renders the display labels.
     registry = discover_models()
     return {
         "models": [

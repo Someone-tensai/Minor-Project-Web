@@ -449,6 +449,43 @@
       outline-offset: 1px;
     }
 
+    .model-cascade-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      align-items: end;
+    }
+
+    .cascade-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1 1 150px;
+      min-width: 130px;
+    }
+
+    .cascade-status {
+      font-family: var(--font-form);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin: -8px 0 16px;
+    }
+
+    .cascade-status.resolved { color: var(--accent); }
+    .cascade-status.conflict { color: #c0392b; }
+
+    .model-readonly-label {
+      font-family: var(--font-form);
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid var(--rule-strong);
+      background: var(--surface-alt);
+      padding: 10px 12px;
+      margin-bottom: 16px;
+    }
+
     .study-model-meta {
       border: 1px solid var(--rule);
       background: var(--surface-alt);
@@ -464,7 +501,7 @@
 
     .study-grid {
       display: grid;
-      grid-template-columns: repeat(7, 1fr);
+      grid-template-columns: repeat(8, 1fr);
       border: 1px solid var(--rule-strong);
       background: var(--surface);
     }
@@ -1095,18 +1132,25 @@
           <span class="strip-num">01 / 03</span>
         </div>
 
+        <!-- Cascading dropdowns: rebuilt dynamically in JS from /models, so
+             only valid combinations (given what's actually in backend/models/)
+             are ever selectable. See rebuildCascade(). -->
+        <div id="modelCascadeRow" class="model-cascade-row"></div>
+        <div id="modelReadonlyLabel" class="model-readonly-label" style="display:none;"></div>
+        <div id="cascadeStatus" class="cascade-status">Loading available models&hellip;</div>
+
         <div class="study-row-top">
-          <div class="field-select-wrapper">
-            <label for="modelSelect" class="field-label">Model checkpoint</label>
-            <select id="modelSelect" class="clinical-select"></select>
-          </div>
-          <div class="study-model-meta">
+          <div class="study-model-meta" style="grid-column: 1 / -1;">
             <span class="field-label" style="margin:0;">Grad-CAM target layer</span>
             <span id="studyTargetLayer" style="font-weight:700;">&mdash;</span>
           </div>
         </div>
 
         <div class="study-grid" role="group" aria-label="Model architecture and training parameters">
+          <div class="spec-cell">
+            <div class="cell-label">Training</div>
+            <div class="cell-value" id="specTraining">&mdash;</div>
+          </div>
           <div class="spec-cell">
             <div class="cell-label">Arch</div>
             <div class="cell-value" id="specArch">&mdash;</div>
@@ -1281,15 +1325,146 @@
     const CLASSES = ["glioma", "meningioma", "notumor", "pituitary"];
 
     // App state
-    let modelsRegistry = {};
+    let modelsRegistry = {};  // name -> {file, arch, spec, ...} from /models
+    let modelsList = [];      // same data as a flat array, easier to filter
+    let selections = {};      // cascade field id -> selected raw value (or null)
     let activeMode = "live"; // "live" or runId
     let selectedFile = null;
     let selectedFileBase64 = null;
     let historyRuns = [];
 
+    // Cascading model-selection field definitions, in display order.
+    // "raw" is the key inside spec._raw used for filtering; "get" produces
+    // the human-readable option label from a model's spec.
+    const CASCADE_FIELDS = [
+      { id: "train",   raw: "train",   label: "Training",   get: s => s.training_type ? toTitleCase(s.training_type) : null },
+      { id: "arch",    raw: "arch",    label: "Model",       get: s => s.arch },
+      { id: "freeze",  raw: "freeze",  label: "Layer setup", get: s => s.layer },
+      { id: "dist",    raw: "dist",    label: "Distribution",get: s => s.distribution },
+      { id: "strat",   raw: "strat",   label: "Strategy",    get: s => s.strategy },
+      { id: "clients", raw: "clients", label: "Clients",     get: s => s.clients != null ? `${s.clients}` : null },
+      { id: "rounds",  raw: "rounds",  label: "Rounds",      get: s => s.rounds != null ? `${s.rounds}` : null },
+      { id: "lr",      raw: "lr",      label: "LR schedule", get: s => s.lr },
+      { id: "mu",      raw: "mu",      label: "Proximal μ",  get: s => s.mu != null ? `μ=${s.mu}` : null },
+      {
+        id: "aug", raw: "aug", label: "Augmented",
+        get: s => s.augmented ? "Augmented" : "Not augmented",
+        // Unlike mu (absence = not applicable), absence here means a real,
+        // always-present boolean value (not augmented) -- so this always
+        // resolves to "1" or "0", never null, and can auto-collapse or
+        // disambiguate like any other field.
+        rawGet: spec => spec.augmented ? "1" : "0",
+      },
+      {
+        id: "version", raw: "version", label: "Run / date",
+        get: s => s.tag ? `${s.date} — ${s.tag}` : s.date,
+        rawGet: spec => `${spec._raw?.date || ""}|${spec._raw?.tag || ""}`,
+      },
+    ];
+
+    function getRawValue(spec, field) {
+      if (!spec._raw) return null; // legacy-parsed spec, no cascade data
+      return field.rawGet ? field.rawGet(spec) : spec._raw[field.raw];
+    }
+
+    // Models matching every CURRENT selection except (optionally) one field --
+    // used to compute which values remain choosable for that one field.
+    function candidatesExcept(exceptFieldId) {
+      return modelsList.filter(m => CASCADE_FIELDS.every(f => {
+        if (f.id === exceptFieldId) return true;
+        const sel = selections[f.id];
+        if (sel == null || sel === "") return true;
+        return String(getRawValue(m.spec, f)) === sel;
+      }));
+    }
+
+    function resolvedCandidates() {
+      return candidatesExcept(null);
+    }
+
+    function getSelectedModelName() {
+      const matches = resolvedCandidates();
+      return matches.length === 1 ? matches[0].name : null;
+    }
+
+    function rebuildCascade() {
+      const container = document.getElementById("modelCascadeRow");
+      container.innerHTML = "";
+
+      CASCADE_FIELDS.forEach(f => {
+        const candidates = candidatesExcept(f.id);
+        const optionMap = new Map(); // raw value (string) -> display label
+        candidates.forEach(m => {
+          const raw = getRawValue(m.spec, f);
+          const label = f.get(m.spec);
+          if (raw == null || raw === "" || raw === "|" || !label) return;
+          if (!optionMap.has(String(raw))) optionMap.set(String(raw), label);
+        });
+
+        if (optionMap.size === 0) {
+          // Field genuinely doesn't apply to ANY current candidate (e.g.
+          // Distribution when Training=Centralized) -- hide it. This is the
+          // only case a field ever disappears; narrowing down to a single
+          // value does NOT hide it -- the dropdown stays visible and
+          // changeable so the model can always be switched, not just before
+          // the first full resolution.
+          selections[f.id] = null;
+          return;
+        }
+
+        // Genuine choice: render a dropdown, keeping the current selection
+        // if it's still among the valid options.
+        if (!optionMap.has(selections[f.id])) selections[f.id] = "";
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "cascade-field";
+        const label = document.createElement("label");
+        label.className = "field-label";
+        label.textContent = f.label;
+        const select = document.createElement("select");
+        select.className = "clinical-select";
+        select.innerHTML = `<option value="">Any</option>` +
+          [...optionMap.entries()].map(([raw, lbl]) =>
+            `<option value="${raw}" ${selections[f.id] === raw ? "selected" : ""}>${lbl}</option>`
+          ).join("");
+        select.addEventListener("change", () => {
+          selections[f.id] = select.value;
+          rebuildCascade();
+        });
+        wrapper.appendChild(label);
+        wrapper.appendChild(select);
+        container.appendChild(wrapper);
+      });
+
+      updateCascadeStatus();
+    }
+
+    function updateCascadeStatus() {
+      const statusEl = document.getElementById("cascadeStatus");
+      const matches = resolvedCandidates();
+      const resolvedName = matches.length === 1 ? matches[0].name : null;
+
+      if (modelsList.length === 0) {
+        statusEl.textContent = "No models found in backend/models/.";
+        statusEl.className = "cascade-status conflict";
+      } else if (resolvedName) {
+        statusEl.textContent = "Model resolved.";
+        statusEl.className = "cascade-status resolved";
+      } else if (matches.length === 0) {
+        statusEl.textContent = "No trained model matches this combination.";
+        statusEl.className = "cascade-status conflict";
+      } else {
+        statusEl.textContent = `${matches.length} models match — narrow the selection above.`;
+        statusEl.className = "cascade-status";
+      }
+
+      updateStudySpecFields(resolvedName ? modelsRegistry[resolvedName].spec : null);
+      updateExecuteRunState();
+    }
+
     // DOM Elements
-    const modelSelect = document.getElementById("modelSelect");
     const studyTargetLayer = document.getElementById("studyTargetLayer");
+    const specTraining = document.getElementById("specTraining");
     const specArch = document.getElementById("specArch");
     const specDist = document.getElementById("specDist");
     const specStrat = document.getElementById("specStrat");
@@ -1401,6 +1576,7 @@
 
     function updateStudySpecFields(spec) {
       if (!spec) {
+        specTraining.textContent = "—";
         specArch.textContent = "—";
         specDist.textContent = "—";
         specStrat.textContent = "—";
@@ -1411,6 +1587,7 @@
         studyTargetLayer.textContent = "—";
         return;
       }
+      specTraining.textContent = spec.training_type ? toTitleCase(spec.training_type) : "—";
       specArch.textContent = spec.arch || "—";
       specDist.textContent = spec.distribution || "—";
       specStrat.textContent = spec.strategy ? `${spec.strategy}${spec.mu != null ? ` (μ=${spec.mu})` : ""}` : "—";
@@ -1471,7 +1648,7 @@
 
     function updateExecuteRunState() {
       if (activeMode !== "live") return;
-      const ready = !!selectedFile && !!modelSelect.value;
+      const ready = !!selectedFile && !!getSelectedModelName();
       executeRunBtn.disabled = !ready;
       if (ready) {
         setStatus("Ready to run", "active");
@@ -1484,12 +1661,9 @@
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = await res.json();
         modelsRegistry = Object.fromEntries(data.models.map(m => [m.name, m]));
-        
-        modelSelect.innerHTML = data.models.map(m => `<option value="${m.name}">${formatModelLabel(m.name, m.spec)}</option>`).join("");
-        if (data.models.length > 0) {
-          updateStudySpecFields(modelsRegistry[data.models[0].name].spec);
-        }
-        updateExecuteRunState();
+        modelsList = data.models;
+        selections = {};
+        rebuildCascade();
       } catch (err) {
         setStatus(`Couldn't load models — ${err.message}`, "error");
       }
@@ -1542,16 +1716,15 @@
       tabNewRun.classList.add("active");
       renderHistoryTabs();
 
-      modelSelect.disabled = false;
+      document.getElementById("modelCascadeRow").style.display = "flex";
+      document.getElementById("modelReadonlyLabel").style.display = "none";
+      document.getElementById("cascadeStatus").style.display = "block";
       liveActionsGroup.style.display = "flex";
       historyActionsGroup.style.display = "none";
       worksheetCaseRef.textContent = "New run";
       worksheetTimestamp.textContent = formatTimestamp(Math.floor(Date.now() / 1000));
 
-      const curModel = modelSelect.value;
-      if (curModel && modelsRegistry[curModel]) {
-        updateStudySpecFields(modelsRegistry[curModel].spec);
-      }
+      updateCascadeStatus();
 
       if (selectedFileBase64) {
         dropFrame.classList.add("has-image");
@@ -1596,9 +1769,15 @@
         toggleHistoryList(true);
         renderHistoryTabs();
 
-        // Lock study controls
-        modelSelect.value = r.model_name;
-        modelSelect.disabled = true;
+        // Lock study controls -- historical runs may reference an old
+        // (pre-rename) filename that the current cascade can't represent,
+        // so just show it as a read-only label instead of trying to drive
+        // the live dropdowns to match it.
+        document.getElementById("modelCascadeRow").style.display = "none";
+        document.getElementById("cascadeStatus").style.display = "none";
+        const readonlyLabel = document.getElementById("modelReadonlyLabel");
+        readonlyLabel.textContent = formatModelLabel(r.model_name, r.spec);
+        readonlyLabel.style.display = "block";
         updateStudySpecFields(r.spec);
 
         // Update worksheet headers
@@ -1628,11 +1807,7 @@
     }
 
     // Event Listeners
-    modelSelect.addEventListener("change", () => {
-      const m = modelsRegistry[modelSelect.value];
-      if (m) updateStudySpecFields(m.spec);
-      updateExecuteRunState();
-    });
+    // (cascade dropdown listeners are attached dynamically in rebuildCascade())
 
     function handleSelectedFile(file) {
       if (!file) return;
@@ -1693,13 +1868,14 @@
     });
 
     executeRunBtn.addEventListener("click", async () => {
-      if (!selectedFile || !modelSelect.value || activeMode !== "live") return;
+      const resolvedModelName = getSelectedModelName();
+      if (!selectedFile || !resolvedModelName || activeMode !== "live") return;
 
       executeRunBtn.disabled = true;
       setStatus("Running inference…", "active");
 
       const formData = new FormData();
-      formData.append("model_name", modelSelect.value);
+      formData.append("model_name", resolvedModelName);
       formData.append("file", selectedFile);
       formData.append("save_to_history", "true");
 
